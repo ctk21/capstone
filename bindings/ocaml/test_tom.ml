@@ -209,7 +209,8 @@ module R21 = struct
 		(* we look for operands that are imm32 which fit in imm8 *)
 		let flag =
 			match insn.arch with
-				| CS_INFO_X86 x86 -> array_find_some check_imm_operand x86.operands
+				| CS_INFO_X86 x86 when insn.mnemonic <> "nop" ->
+					array_find_some check_imm_operand x86.operands
  				| _ -> None
 		in
 		match flag with
@@ -345,7 +346,7 @@ let get_function_blocks filename =
 		| Ok xs -> blocks_from_lines xs
 		| Error (`Msg e) -> printf "ERROR: Failure when running nm exec command:\n %s\n" e; []
 
-let process_block buff block =
+let process_block buff block passes =
 	let offset = block.start_addr in
 	let n_bytes = block.end_addr - block.start_addr in
 	let code = Bytes.sub_string buff offset n_bytes in
@@ -359,19 +360,8 @@ let process_block buff block =
 		| _ -> ();
 
 	let insns = cs_disasm handle code (Int64.of_int offset) insns_to_read in
-	List.iter (print_insn handle mode) insns;
 
-	(* pass analysis functions over the data *)
-	let fn cfg =
-		let (empty_fn, step_fn, print_fn) = cfg in
-		let output = List.fold_left step_fn (empty_fn ()) insns in
-		print_fn output
-	in
-
-	fn (R10.empty_state, R10.step_state, R10.print);
-	fn (R21.empty_state, R21.step_state, R21.print);
-	fn (R26.empty_state, R26.step_state, R26.print);
-	fn (R64.empty_state, R64.step_state, R64.print);
+	List.iter (fun fn -> fn handle mode insns) passes;
 
 	printf "Total instructions %d in %d bytes\n" (List.length insns) (String.length code);
 
@@ -380,17 +370,43 @@ let process_block buff block =
 		| _ -> printf " Failed to close handle"
 
 
-let run filename =
+let build_passes passes =
+	printf "Will run the following passes: %s\n" passes;
+	let passes = String.split_on_char ',' passes in
+
+	(* pass analysis functions over the data *)
+	let fn cfg handle mode insns =
+		let (empty_fn, step_fn, print_fn) = cfg in
+		let output = List.fold_left step_fn (empty_fn ()) insns in
+		print_fn output
+	in
+
+	let add_stage fns pass =
+		match pass with
+		  | "dump" -> (fun handle mode insns -> List.iter (print_insn handle mode) insns)::fns
+		  | "R10" -> (fn (R10.empty_state, R10.step_state, R10.print))::fns
+  		  | "R21" -> (fn (R21.empty_state, R21.step_state, R21.print))::fns
+  		  | "R26" -> (fn (R26.empty_state, R26.step_state, R26.print))::fns
+  		  | "R64" -> (fn (R64.empty_state, R64.step_state, R64.print))::fns
+  		  | _ -> printf "Can't dispatch unknown pass '%s'\n" pass; fns
+  	in
+
+	List.fold_left add_stage [] passes
+
+
+let run filename passes =
 	let in_file = open_in_bin filename in
 	let file_bytes = in_channel_length in_file in
 	printf "Will read from %s (%d bytes)\n" filename file_bytes;
 	let buff = Bytes.create file_bytes in
 	really_input in_file buff 0 file_bytes;
 
+	let passes = build_passes passes in
+
 	let blocks = get_function_blocks filename in
 	let aux b =
 		printf "\n0x%x 0x%x %s:\n" b.start_addr b.end_addr b.name;
-		process_block buff b;
+		process_block buff b passes;
 	in
 	List.iter aux blocks;
 
@@ -401,13 +417,17 @@ let filename =
   let doc = "binary input filename" in
   Arg.(required & pos 0 (some string) None & info [] ~docv:"FILE" ~doc)
 
+let passes =
+  let doc = "Which passes to run on the binary; comma seperated list (e.g. \"dump,R21,R64\"" in
+  Arg.(value & opt string "R10,R21,R26,R64" & info ["passes"] ~docv:"PASSES" ~doc)
+
 let prog =
   let info =
     let doc = "test for Intel optimization rule violations" in
     let man = [] in
     Term.info "test_tom" ~version:"v0.1" ~doc ~man
   in
-  (Term.(const run $ filename ), info)
+  (Term.(const run $ filename $ passes), info)
 
 let () = Term.exit (Term.eval prog)
 
