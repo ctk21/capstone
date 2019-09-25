@@ -5,10 +5,11 @@ LIB = capstone
 FLAGS = '-Wall -Wextra -Wwrite-strings'
 PYTHON2 = python
 
-all: arm_const.cmxa arm64_const.cmxa m680x_const.cmxa mips_const.cmxa ppc_const.cmxa sparc_const.cmxa sysz_const.cmxa x86_const.cmxa xcore_const.cmxa arm.cmxa arm64.cmxa m680x.cmxa mips.cmxa ppc.cmxa x86.cmxa sparc.cmxa systemz.cmxa xcore.cmxa capstone.cmxa test_basic.cmx test_detail.cmx test_x86.cmx test_arm.cmx test_arm64.cmx test_mips.cmx test_ppc.cmx test_sparc.cmx test_systemz.cmx test_xcore.cmx test_m680x.cmx ocaml.o
+all: arm_const.cmxa arm64_const.cmxa m680x_const.cmxa mips_const.cmxa ppc_const.cmxa sparc_const.cmxa sysz_const.cmxa x86_const.cmxa xcore_const.cmxa arm.cmxa arm64.cmxa m680x.cmxa mips.cmxa ppc.cmxa x86.cmxa sparc.cmxa systemz.cmxa xcore.cmxa capstone.cmxa test_basic.cmx test_detail.cmx test_x86.cmx test_tom.cmx test_arm.cmx test_arm64.cmx test_mips.cmx test_ppc.cmx test_sparc.cmx test_systemz.cmx test_xcore.cmx test_m680x.cmx ocaml.o
 	ocamlopt -o test_basic -ccopt $(FLAGS) ocaml.o capstone.cmx test_basic.cmx -cclib -l$(LIB)
 	ocamlopt -o test_detail -ccopt $(FLAGS) capstone.cmx ocaml.o test_detail.cmx -cclib -l$(LIB)
 	ocamlopt -o test_x86 -ccopt $(FLAGS) capstone.cmx ocaml.o x86.cmx x86_const.cmx test_x86.cmx -cclib -l$(LIB)
+	ocamlfind ocamlopt -o test_tom -linkpkg -package cmdliner,bos -ccopt $(FLAGS) capstone.cmx ocaml.o x86.cmx x86_const.cmx test_tom.cmx -cclib -l$(LIB)
 	ocamlopt -o test_arm -ccopt $(FLAGS) capstone.cmx ocaml.o arm.cmx arm_const.cmx test_arm.cmx -cclib -l$(LIB)
 	ocamlopt -o test_arm64 -ccopt $(FLAGS) capstone.cmx ocaml.o arm64.cmx arm64_const.cmx test_arm64.cmx -cclib -l$(LIB)
 	ocamlopt -o test_mips -ccopt $(FLAGS) capstone.cmx ocaml.o mips.cmx mips_const.cmx test_mips.cmx -cclib -l$(LIB)
@@ -27,6 +28,9 @@ test_detail.cmx: test_detail.ml
 
 test_x86.cmx: test_x86.ml
 	ocamlopt -ccopt $(FLAGS) -c $< -cclib -l$(LIB)
+
+test_tom.cmx: test_tom.ml
+	ocamlfind ocamlopt -ccopt $(FLAGS) -c -package cmdliner,bos $< -cclib -l$(LIB)
 
 test_arm.cmx: test_arm.ml
 	ocamlopt -ccopt $(FLAGS) -c $< -cclib -l$(LIB)

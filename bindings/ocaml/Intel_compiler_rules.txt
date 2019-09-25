@@ -1,0 +1,54 @@
+
+BADNESS:
+ - OS X has junk deadcode segments in binaries
+ - Capstone bails when it hits a junk segment (and skipdata bad with ocaml bindings)
+
+Options:
+ - do everything on Linux
+ - dump the elf information to get the function locations and then load based on that
+
+
+Magic to rip out the text section of a binary on OS X:
+ /usr/local/opt/binutils/bin/gobjcopy -j .text -O binary -I mach-o-x86-64 test_tom.example test_tom.example.text.bin
+
+Key:
+ * let's try to detect this one
+ + might be interesting down the line
+ @ done
+
+@ Assembly/Compiler Coding Rule 10. (M impact, L generality) Do not put more than four branches in a 16-byte chunk.
+(We will look for instruction start addresses appearing within the same 16-byte aligned chunk)
+(Question as to if it is a 16-byte chunk aligned and use the start address)
+(See this triggered by OCaml GC blocks after the ret, unclear of impact as the GC blocks are cold; will hurt the DSB but they never get executes)
+
+Assembly/Compiler Coding Rule 11. (M impact, L generality) Do not put more than two end loop branches in a 16-byte chunk.
+
+Assembly/Compiler Coding Rule 12. (M impact, H generality) All branch targets should be 16- byte aligned.
+[Zia Answari talk suggests this not relevant]
+
+@ Assembly/Compiler Coding Rule 21. (MH impact, MH generality) Favor generating code using imm8 or imm32 values instead of imm16 values.
+(could detect when an imm8 would work but we use an imm32?)
+
+Assembly/Compiler Coding Rule 22. (M impact, ML generality) Ensure instructions using 0xF7 opcode byte does not start at offset 14 of a fetch line; and avoid using these instruction to operate on 16-bit data, upcast short data to 32 bits.
+
+Assembly/Compiler Coding Rule 25. (M impact, M generality) Avoid putting explicit references to ESP in a sequence of stack operations (POP, PUSH, CALL, RET).
+
+@ Assembly/Compiler Coding Rule 26. (ML impact, L generality) Use simple instructions that are less than eight bytes in length.
+(Need some way to filter out no-ops)
+
+Assembly/Compiler Coding Rule 33. (M impact, H generality) INC and DEC instructions should be replaced with ADD or SUB instructions, because ADD and SUB overwrite all flags, whereas INC and DEC do not, therefore creating false dependencies on earlier instructions that set the flags.
+[Suggested not relevant any more: https://stackoverflow.com/questions/36510095/inc-instruction-vs-add-1-does-it-matter]
+
++ Assembly/Compiler Coding Rule 64. (H impact, M generality) Use the 32-bit versions of instructions in 64-bit mode to reduce code size unless the 64-bit version is necessary to access 64-bit data or additional registers.
+(we could look for where we do mov IMM, REG where the IMM is a 32-bit value)
+
++ pg49 (2-19) s2.3.2.2 decoded i-cache
+ - 32byte region with the instructions determined by the EIP
+ - up to two conidtional branches in a way
+ - non-conditional branch always last in a way
+ - up to 3 ways
+(Zia ansari talk around 18:30, its the EIP that matters)
+
+* pg100 3.4.1 Branch Prediction Optimization
+ - Avoid putting two conditional branch instructions in a loop so that both have the same branch target address and, at the same time, belong to (i.e. have their last bytes' addresses within) the same 16- byte aligned code block.
+(Zia ansari talk around 21:30, it's the EIP that matters)
