@@ -3,13 +3,7 @@ BADNESS:
  - OS X has junk deadcode segments in binaries
  - Capstone bails when it hits a junk segment (and skipdata bad with ocaml bindings)
 
-Options:
- - do everything on Linux
- - dump the elf information to get the function locations and then load based on that
-
-
-Magic to rip out the text section of a binary on OS X:
- /usr/local/opt/binutils/bin/gobjcopy -j .text -O binary -I mach-o-x86-64 test_tom.example test_tom.example.text.bin
+We have dealt with the badness by doing decoding using nm (which works on Linux and OS X) function by function.
 
 Key:
  * let's try to detect this one
@@ -27,7 +21,9 @@ Assembly/Compiler Coding Rule 12. (M impact, H generality) All branch targets sh
 [Zia Answari talk suggests this not relevant]
 
 @ Assembly/Compiler Coding Rule 21. (MH impact, MH generality) Favor generating code using imm8 or imm32 values instead of imm16 values.
-(could detect when an imm8 would work but we use an imm32?)
+(could detect when an imm8 would work but we use an imm32?
+Can not replace imm32 with imm8 as the top bits in the 64bit register will not be zeroed. R64 suggests using imm32 into 32bit register where we can and this seems to be what icc/gcc/clang do.
+Can also check that we use 8bit displacements rather than 32bit displacements when possible)
 
 Assembly/Compiler Coding Rule 22. (M impact, ML generality) Ensure instructions using 0xF7 opcode byte does not start at offset 14 of a fetch line; and avoid using these instruction to operate on 16-bit data, upcast short data to 32 bits.
 
@@ -39,7 +35,7 @@ Assembly/Compiler Coding Rule 25. (M impact, M generality) Avoid putting explici
 Assembly/Compiler Coding Rule 33. (M impact, H generality) INC and DEC instructions should be replaced with ADD or SUB instructions, because ADD and SUB overwrite all flags, whereas INC and DEC do not, therefore creating false dependencies on earlier instructions that set the flags.
 [Suggested not relevant any more: https://stackoverflow.com/questions/36510095/inc-instruction-vs-add-1-does-it-matter]
 
-+ Assembly/Compiler Coding Rule 64. (H impact, M generality) Use the 32-bit versions of instructions in 64-bit mode to reduce code size unless the 64-bit version is necessary to access 64-bit data or additional registers.
+@ Assembly/Compiler Coding Rule 64. (H impact, M generality) Use the 32-bit versions of instructions in 64-bit mode to reduce code size unless the 64-bit version is necessary to access 64-bit data or additional registers.
 (we could look for where we do mov IMM, REG where the IMM is a 32-bit value)
 
 + pg49 (2-19) s2.3.2.2 decoded i-cache

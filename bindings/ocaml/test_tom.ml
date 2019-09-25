@@ -173,7 +173,6 @@ module R10 = struct
 	    state
 
 	let print (state:t) =
-		(*printf "R10 flagged chunks with more than 4 branches:\n";*)
 		let print_chunk c =
 			printf "[R10]  0x%Lx\tn_branches: %d\n" c.addr0 c.n_branches in
 		List.iter print_chunk (List.rev state.flagged_chunks)
@@ -183,10 +182,13 @@ end
 	Assembly/Compiler Coding Rule 21. (MH impact, MH generality)
 	Favor generating code using imm8 or imm32 values instead of imm16 values.
 
-    TODO: we are catching displacements that should fit in imm8, e.g.
-	    0000000100003e7e        48 8b 5c 24 10  movq    0x10(%rsp), %rbx
-		0000000100003e83        48 8b 9b 80 00 00 00    movq    0x80(%rbx), %rbx
+	NB: can not replace a imm32 with an imm8 load in general as top bits of the
+	register are left unchanged.
 
+    We check displacements use (signed) 8-bit if they fit
+        48 8b 5c 24 10          movq    0x10(%rsp), %rbx
+	NOT
+		48 8b 9b 10 00 00 00    movq    0x10(%rbx), %rbx
 *)
 module R21 = struct
 	(* list of (flagged address, disassembly, imm, size) *)
@@ -194,12 +196,13 @@ module R21 = struct
 
 	let empty_state () = []
 
-	let value_fits_in_byte n =
-		int32_unsigned_compare (Int32.of_int n) 256l < 0
+	let value_fits_in_signed8 n =
+		let n = Int32.of_int n in
+		-128l < n && n < 128l
 
 	let check_imm_operand op =
 		match op.value with
-		| X86_OP_IMM imm when (imm.size = 2 || imm.size = 4) && value_fits_in_byte imm.value -> Some (imm.value, imm.size)
+		| X86_OP_MEM mem when mem.disp_encoding_size == 4 && value_fits_in_signed8 mem.disp -> Some (mem.disp, mem.disp_encoding_size)
 		| _ -> None
 
 	let step_state (state:t) (insn:Capstone.cs_insn0) =
@@ -214,7 +217,6 @@ module R21 = struct
 			| None -> state
 
 	let print (state:t) =
-		(*printf "R21 flagged instructions\n";*)
 		let print_flagged_addr fa =
 			let addr, str, imm, size = fa in
 			printf "[R21]  0x%Lx\t%s\timm: %d\tsize: %u\n" addr str imm size
@@ -242,10 +244,63 @@ module R26 = struct
 		state
 
 	let print (state:t) =
-		(*printf "R26 flagged instructions\n";*)
 		let print_flagged_addr fa =
 			let addr, size, str = fa in
 			printf "[R26]  0x%Lx\tsize: %d\t%s\n" addr size str
+		in
+		List.iter print_flagged_addr (List.rev state)
+end
+
+
+(*
+	Assembly/Compiler Coding Rule 64. (H impact, M generality)
+	Use the 32-bit versions of instructions in 64-bit mode to reduce code size
+	unless the 64-bit version is necessary to access 64-bit data or additional
+	registers.
+*)
+module R64 = struct
+	(* list of (flagged address, disassembly, imm, size) *)
+	type t = (Int64.t * string * int * int) list
+
+	let empty_state () = []
+
+	let imm32_sign_extends_to_64 n =
+		(Int32.of_int n) > 0l || true
+
+	let check_mov_imm_reg64_could_be_reg32 insn x86 =
+		(* check is a "mov" with 2 operands
+	 	   AND first operand REG size 8
+	 	   AND second operand IMM size 4
+	 	   AND the IMM operand will sign extend to 64 correctly *)
+		match insn.mnemonic with
+			| "mov" when Array.length x86.operands = 2 -> begin
+					let op1 = x86.operands.(0) in
+					let op2 = x86.operands.(1) in
+					match (op1.value, op2.value) with
+						| (X86_OP_REG _, X86_OP_IMM imm) when op1.size = 8 && imm.encoding_size = 4 && imm32_sign_extends_to_64 imm.value ->
+						    	Some (imm.value, imm.encoding_size)
+						| _ -> None
+				end
+			| _ -> None
+
+
+	let step_state (state:t) (insn:Capstone.cs_insn0) =
+		(* we look for instructions that are moves to a 64bit register with an imm32 operand that could be sign extended correctly in a 32bit register *)
+
+		let flag =
+			match insn.arch with
+				| CS_INFO_X86 x86 ->
+					check_mov_imm_reg64_could_be_reg32 insn x86
+ 				| _ -> None
+		in
+		match flag with
+			| Some (imm, size) -> (Int64.of_int insn.address, insn_dissasmble_str insn, imm, size) :: state
+			| None -> state
+
+	let print (state:t) =
+		let print_flagged_addr fa =
+			let addr, str, imm, size = fa in
+			printf "[R64]  0x%Lx\t%s\timm: %d\tsize: %u\n" addr str imm size
 		in
 		List.iter print_flagged_addr (List.rev state)
 end
@@ -304,7 +359,7 @@ let process_block buff block =
 		| _ -> ();
 
 	let insns = cs_disasm handle code (Int64.of_int offset) insns_to_read in
-	(*List.iter (print_insn handle mode) insns;*)
+	List.iter (print_insn handle mode) insns;
 
 	(* pass analysis functions over the data *)
 	let fn cfg =
@@ -316,6 +371,7 @@ let process_block buff block =
 	fn (R10.empty_state, R10.step_state, R10.print);
 	fn (R21.empty_state, R21.step_state, R21.print);
 	fn (R26.empty_state, R26.step_state, R26.print);
+	fn (R64.empty_state, R64.step_state, R64.print);
 
 	printf "Total instructions %d in %d bytes\n" (List.length insns) (String.length code);
 
