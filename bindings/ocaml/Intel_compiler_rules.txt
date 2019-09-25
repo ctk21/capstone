@@ -38,13 +38,13 @@ Assembly/Compiler Coding Rule 33. (M impact, H generality) INC and DEC instructi
 @ Assembly/Compiler Coding Rule 64. (H impact, M generality) Use the 32-bit versions of instructions in 64-bit mode to reduce code size unless the 64-bit version is necessary to access 64-bit data or additional registers.
 (we could look for where we do mov IMM, REG where the IMM is a 32-bit value)
 
-+ pg49 (2-19) s2.3.2.2 decoded i-cache
+@ pg49 (2-19) s2.3.2.2 decoded i-cache
  - 32byte region with the instructions determined by the EIP
  - up to two conidtional branches in a way
  - non-conditional branch always last in a way
  - up to 3 ways
 (Zia ansari talk around 18:30, its the EIP that matters)
 
-* pg100 3.4.1 Branch Prediction Optimization
+@ pg100 3.4.1 Branch Prediction Optimization
  - Avoid putting two conditional branch instructions in a loop so that both have the same branch target address and, at the same time, belong to (i.e. have their last bytes' addresses within) the same 16- byte aligned code block.
-(Zia ansari talk around 21:30, it's the EIP that matters)
+(Zia ansari talk around 21:30)

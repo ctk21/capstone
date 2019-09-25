@@ -245,7 +245,7 @@ module R26 = struct
 	let print (state:t) =
 		let print_flagged_addr fa =
 			let addr, size, str = fa in
-			printf "[R26]  0x%Lx\tsize: %d\t%s\n" addr size str
+			printf "[R26]  0x%Lx\tsize: %2d\t%s\n" addr size str
 		in
 		List.iter print_flagged_addr (List.rev state)
 end
@@ -366,6 +366,107 @@ module Rbpo = struct
 end
 
 
+(*
+	+ pg49 (2-19) s2.3.2.2 decoded i-cache
+	 - 32byte region with the instructions determined by the EIP
+	 - up to two conidtional branches in a way
+	 - non-conditional branch always last in a way
+	 - up to 3 ways
+	(Zia ansari talk around 18:30, its the EIP that matters)
+*)
+module Rdsb = struct
+	(*	we are looking for 32b block that will not fit in the DSB
+		because it has more than 3 ways caused by branches
+		NB: we are ignoring uops spilling a way
+	*)
+
+	type dsb_way = {
+		mutable last_addr: Int64.t; (* start of this way *)
+		mutable n_insn: int; (* number of instructions in this way *)
+		mutable n_cbranch: int; (* number of condional branches*)
+		mutable n_ncbranch: int; (* number of non-condional branches*)
+	}
+
+	type dsb_chunk = {
+				 	addr0: Int64.t; (* start address of 32-byte chunks*)
+ 					mutable n_ways: int; (* number of ways needed *)
+ 					mutable ways: dsb_way list; (* list of ways in chunk *)
+				 }
+	type t = 	 {
+					cur_chunk: dsb_chunk;
+					flagged_chunks: dsb_chunk list;
+				 }
+
+	let new_dsb_way addr0 =
+		{ last_addr=addr0; n_insn=0; n_cbranch=0; n_ncbranch=0 }
+
+	let new_dsb_chunk addr0 =
+		{ addr0=addr0; n_ways=1; ways=[new_dsb_way addr0] }
+
+	let empty_state () =
+		{ cur_chunk=new_dsb_chunk 0L; flagged_chunks=[]; }
+
+	let n_active_ways chunk =
+		if (List.hd chunk.ways).n_insn = 0
+	    then chunk.n_ways - 1
+	    else chunk.n_ways
+
+	let step_state (state:t) insn =
+	 	let insn_addr = Int64.of_int insn.address in
+	    let insn_chunk_addr0 = align32 insn_addr in
+	    let state =
+	    	if insn_chunk_addr0 <> state.cur_chunk.addr0
+	    	then begin
+	    		let flagged_chunks =
+	    			if n_active_ways state.cur_chunk > 3
+	    			then state.cur_chunk :: state.flagged_chunks
+	    			else state.flagged_chunks in
+	    		{
+	    			cur_chunk=new_dsb_chunk insn_chunk_addr0;
+	    			flagged_chunks=flagged_chunks
+	    		}
+	    	end
+	    	else state in
+
+		let is_cbranch insn =
+			(insn_in_groups insn [_CS_GRP_JUMP] && insn.mnemonic <> "jmp")
+		in
+
+		let is_ncbranch insn =
+			(insn_in_groups insn [_CS_GRP_CALL; _CS_GRP_RET]) || ((insn_in_groups insn [_CS_GRP_JUMP]) && insn.mnemonic = "jmp")
+		in
+
+		let cur_way = List.hd state.cur_chunk.ways in
+		if is_cbranch insn then
+			cur_way.n_cbranch <- cur_way.n_cbranch + 1;
+		if is_ncbranch insn then
+			cur_way.n_ncbranch <- cur_way.n_ncbranch + 1;
+
+		cur_way.last_addr <- insn_addr;
+		cur_way.n_insn <- cur_way.n_insn + 1;
+
+		(* we have filled the way with branches so need to use another *)
+		if cur_way.n_cbranch = 2 || cur_way.n_ncbranch = 1 then begin
+			state.cur_chunk.n_ways <- state.cur_chunk.n_ways + 1;
+			state.cur_chunk.ways <- (new_dsb_way insn_addr)::state.cur_chunk.ways;
+		end;
+
+	    state
+
+	let print (state:t) =
+		let print_way w =
+			if w.n_insn > 0 then
+				printf " [last_addr: 0x%Lx  n|c|nc: %d|%d|%d]" w.last_addr w.n_insn w.n_cbranch w.n_ncbranch
+		in
+		let print_chunk c =
+			printf "[Rdsb]  0x%Lx\tn_ways: %d  ways:" c.addr0 (n_active_ways c);
+			List.iter print_way (List.rev c.ways);
+			printf "\n";
+		in
+		List.iter print_chunk (List.rev state.flagged_chunks)
+end
+
+
 type function_block = {
 	start_addr: int;
 	end_addr: int;
@@ -449,6 +550,7 @@ let build_passes passes =
   		  | "R26"  -> (fn (R26.empty_state, R26.step_state, R26.print))::fns
   		  | "R64"  -> (fn (R64.empty_state, R64.step_state, R64.print))::fns
   		  | "Rbpo" -> (fn (Rbpo.empty_state, Rbpo.step_state, Rbpo.print))::fns
+  		  | "Rdsb" -> (fn (Rdsb.empty_state, Rdsb.step_state, Rdsb.print))::fns
   		  | _ -> printf "Can't dispatch unknown pass '%s'\n" pass; fns
   	in
 
@@ -480,7 +582,7 @@ let filename =
 
 let passes =
   let doc = "Which passes to run on the binary; comma seperated list (e.g. \"dump,R21,R64\"" in
-  Arg.(value & opt string "R10,R21,R26,R64,Rbpo" & info ["passes"] ~docv:"PASSES" ~doc)
+  Arg.(value & opt string "R10,R21,R26,R64,Rbpo,Rdsb" & info ["passes"] ~docv:"PASSES" ~doc)
 
 let prog =
   let info =
