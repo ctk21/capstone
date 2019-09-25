@@ -10,11 +10,12 @@ type x86_op_mem = {
 	index: int;
 	scale: int;
 	disp: int;
+	disp_encoding_size: int;
 }
 
 type x86_op_imm = {
 	value: int;
-	size: int;
+	encoding_size: int;
 }
 
 type x86_op_value =
