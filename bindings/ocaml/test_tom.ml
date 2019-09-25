@@ -10,12 +10,6 @@ let print_string_hex comment str =
 	Array.iter (printf "0x%02x ") str;
 	printf "\n"
 
-let _X86_CODE64 = "\x55\x48\x8b\x05\xb8\x13\x00\x00"
-
-let all_tests = [
-		(CS_ARCH_X86, [CS_MODE_64], _X86_CODE64, "X86 64 (Intel syntax)", 0L);
-	]
-
 let print_op handle i op =
 	match op.value with
 	| X86_OP_INVALID _ -> ()	(* this would never happens *)
@@ -44,20 +38,23 @@ let print_detail handle mode insn =
 			(* print instruction's opcode *)
 			print_string_hex "\tOpcode: " x86.opcode;
 
+			(* print instruction's size in bytes *)
+			printf "\tinsn_size: %u" insn.size;
+
 			(* print operand's size, address size, displacement size & immediate size *)
 			printf "\taddr_size: %u\n" x86.addr_size;
 
 			(* print modRM byte *)
-			printf "\tmodrm: 0x%x\n" x86.modrm;
+			printf "\tmodrm: 0x%x" x86.modrm;
 
 			(* print displacement value *)
 			if x86.disp != 0 then
-			printf "\tdisp: 0x%x\n" x86.disp;
+			printf "\tdisp: 0x%x" x86.disp;
 
 			(* SIB is invalid in 16-bit mode *)
 			if not (List.mem CS_MODE_16 mode) then (
 				(* print SIB byte *)
-				printf "\tsib: 0x%x\n" x86.sib;
+				printf "\tsib: 0x%x" x86.sib;
 
 				(* print sib index/scale/base (if applicable) *)
 				if x86.sib_index <> _X86_REG_INVALID then
@@ -69,6 +66,7 @@ let print_detail handle mode insn =
 				(cs_reg_name handle x86.sib_base);
 				*)
 			);
+			printf "\n";
 
 			(* print all operands info (type & value) *)
 			if (Array.length x86.operands) > 0 then (
@@ -306,6 +304,68 @@ module R64 = struct
 		List.iter print_flagged_addr (List.rev state)
 end
 
+module Int64Set = Set.Make(Int64)
+
+(*
+	pg100 3.4.1 Branch Prediction Optimization
+	 - Avoid putting two conditional branch instructions in a loop so that both have the same branch target address and, at the same time, belong to (i.e. have their last bytes' addresses within) the same 16- byte aligned code block.
+	(Zia ansari talk around 21:30)
+*)
+module Rbpo = struct
+	(* we will flag two conditional branch instructions with end address
+	   in the same 16b block with the same branch target address *)
+
+	type chunk = {
+				 	addr0: Int64.t; (* start address of 16-byte chunks*)
+ 					mutable n_branches: int; (* number of branches *)
+ 					mutable branch_targets: Int64Set.t; (* array (max size 16) of branch targets *)
+				 }
+	type t = 	 {
+					cur_chunk: chunk;
+					flagged_chunks: chunk list;
+				 }
+
+	let new_chunk addr0 =
+		{ addr0=addr0; n_branches=0; branch_targets=Int64Set.empty }
+
+	let empty_state () =
+		{ cur_chunk=new_chunk 0L; flagged_chunks=[]; }
+
+	let step_state (state:t) insn =
+	 	let insn_addr = Int64.of_int insn.address in
+	    let insn_last_addr = Int64.(add insn_addr (of_int insn.size)) in
+	    let insn_chunk_addr0 = align16 insn_last_addr in
+	    let state =
+	    	if insn_chunk_addr0 <> state.cur_chunk.addr0
+	    	then begin
+	    		let flagged_chunks =
+	    			if state.cur_chunk.n_branches <> Int64Set.cardinal state.cur_chunk.branch_targets
+	    			then state.cur_chunk :: state.flagged_chunks
+	    			else state.flagged_chunks in
+	    		{
+	    			cur_chunk=new_chunk insn_chunk_addr0;
+	    			flagged_chunks=flagged_chunks
+	    		}
+	    	end
+	    	else state in
+		if insn_in_groups insn [_CS_GRP_JUMP] && insn.mnemonic <> "jmp"
+	    then begin
+	    	let target_addr = Int64.of_string insn.op_str in
+	    	state.cur_chunk.n_branches <- state.cur_chunk.n_branches + 1;
+	    	state.cur_chunk.branch_targets <- Int64Set.add target_addr state.cur_chunk.branch_targets;
+	    end;
+	    state
+
+	let print (state:t) =
+		let print_chunk c =
+			printf "[Rbpo]  0x%Lx\tn_branches: %d\tbranch_targets:" c.addr0 c.n_branches;
+			Int64Set.iter (printf " 0x%Lx") c.branch_targets;
+			printf "\n";
+		in
+		List.iter print_chunk (List.rev state.flagged_chunks)
+end
+
+
 type function_block = {
 	start_addr: int;
 	end_addr: int;
@@ -384,14 +444,15 @@ let build_passes passes =
 	let add_stage fns pass =
 		match pass with
 		  | "dump" -> (fun handle mode insns -> List.iter (print_insn handle mode) insns)::fns
-		  | "R10" -> (fn (R10.empty_state, R10.step_state, R10.print))::fns
-  		  | "R21" -> (fn (R21.empty_state, R21.step_state, R21.print))::fns
-  		  | "R26" -> (fn (R26.empty_state, R26.step_state, R26.print))::fns
-  		  | "R64" -> (fn (R64.empty_state, R64.step_state, R64.print))::fns
+		  | "R10"  -> (fn (R10.empty_state, R10.step_state, R10.print))::fns
+  		  | "R21"  -> (fn (R21.empty_state, R21.step_state, R21.print))::fns
+  		  | "R26"  -> (fn (R26.empty_state, R26.step_state, R26.print))::fns
+  		  | "R64"  -> (fn (R64.empty_state, R64.step_state, R64.print))::fns
+  		  | "Rbpo" -> (fn (Rbpo.empty_state, Rbpo.step_state, Rbpo.print))::fns
   		  | _ -> printf "Can't dispatch unknown pass '%s'\n" pass; fns
   	in
 
-	List.fold_left add_stage [] passes
+	List.fold_left add_stage [] (List.rev passes)
 
 
 let run filename passes =
@@ -419,7 +480,7 @@ let filename =
 
 let passes =
   let doc = "Which passes to run on the binary; comma seperated list (e.g. \"dump,R21,R64\"" in
-  Arg.(value & opt string "R10,R21,R26,R64" & info ["passes"] ~docv:"PASSES" ~doc)
+  Arg.(value & opt string "R10,R21,R26,R64,Rbpo" & info ["passes"] ~docv:"PASSES" ~doc)
 
 let prog =
   let info =
