@@ -12,10 +12,15 @@ type x86_op_mem = {
 	disp: int;
 }
 
+type x86_op_imm = {
+	value: int;
+	size: int;
+}
+
 type x86_op_value =
 	| X86_OP_INVALID of int
 	| X86_OP_REG of int
-	| X86_OP_IMM of int
+	| X86_OP_IMM of x86_op_imm
 	| X86_OP_MEM of x86_op_mem
 
 type x86_op = {
@@ -26,7 +31,7 @@ type x86_op = {
 	avx_zero_opmask: int;
 }
 
-type cs_x86 = { 
+type cs_x86 = {
 	prefix: int array;
 	opcode: int array;
 	rex: int;

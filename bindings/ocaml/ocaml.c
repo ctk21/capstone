@@ -374,7 +374,12 @@ CAMLprim value _cs_disasm(cs_arch arch, csh handle, const uint8_t * code, size_t
 										break;
 									case X86_OP_IMM:
 										tmp = caml_alloc(5, 2);
-										Store_field(tmp, 0, Val_int(insn[j-1].detail->x86.operands[i].imm));
+										tmp2 = caml_alloc(2, 0);
+
+										Store_field(tmp2, 0, Val_int(insn[j-1].detail->x86.operands[i].imm));
+										Store_field(tmp2, 1, Val_int(insn[j-1].detail->x86.encoding.imm_size));
+
+										Store_field(tmp, 0, tmp2);
 										break;
 									case X86_OP_MEM:
 										tmp = caml_alloc(5, 3);
