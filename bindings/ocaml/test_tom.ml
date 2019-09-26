@@ -258,26 +258,41 @@ end
 	registers.
 *)
 module R64 = struct
-	(* list of (flagged address, disassembly, imm, size) *)
-	type t = (Int64.t * string * int * int) list
+	type flag =
+		| MOV_IMM of int*int
+		| XOR
+		| None
+
+	(* list of (flagged address, disassembly, flag) *)
+	type t = (Int64.t * string * flag) list
 
 	let empty_state () = []
 
 	let imm32_sign_extends_to_64 n =
-		(Int32.of_int n) > 0l || true
+		(Int32.of_int n) > 0l
 
-	let check_mov_imm_reg64_could_be_reg32 insn x86 =
+	let check_could_be_reg32 insn x86 =
 		(* check is a "mov" with 2 operands
 	 	   AND first operand REG size 8
 	 	   AND second operand IMM size 4
 	 	   AND the IMM operand will sign extend to 64 correctly *)
+
+	 	(* check is a "xor" with a REG size 8 and same args *)
 		match insn.mnemonic with
 			| "mov" when Array.length x86.operands = 2 -> begin
 					let op1 = x86.operands.(0) in
 					let op2 = x86.operands.(1) in
 					match (op1.value, op2.value) with
 						| (X86_OP_REG _, X86_OP_IMM imm) when op1.size = 8 && imm.encoding_size = 4 && imm32_sign_extends_to_64 imm.value ->
-						    	Some (imm.value, imm.encoding_size)
+						    	MOV_IMM (imm.value, imm.encoding_size)
+						| _ -> None
+				end
+			| "xor" when Array.length x86.operands = 2 -> begin
+					let op1 = x86.operands.(0) in
+					let op2 = x86.operands.(1) in
+					match (op1.value, op2.value) with
+						| (X86_OP_REG r1, X86_OP_REG r2) when op1.size = 8 && op2.size = 8 && r1 = r2 ->
+						    	XOR
 						| _ -> None
 				end
 			| _ -> None
@@ -289,17 +304,22 @@ module R64 = struct
 		let flag =
 			match insn.arch with
 				| CS_INFO_X86 x86 ->
-					check_mov_imm_reg64_could_be_reg32 insn x86
+					check_could_be_reg32 insn x86
  				| _ -> None
 		in
 		match flag with
-			| Some (imm, size) -> (Int64.of_int insn.address, insn_dissasmble_str insn, imm, size) :: state
 			| None -> state
+			| x -> (Int64.of_int insn.address, insn_dissasmble_str insn, x) :: state
 
 	let print (state:t) =
 		let print_flagged_addr fa =
-			let addr, str, imm, size = fa in
-			printf "[R64]  0x%Lx\t%s\timm: %d\tsize: %u\n" addr str imm size
+			let addr, str, flag = fa in
+			let flag_str = match flag with
+			 	| MOV_IMM(imm, size) -> String.concat "" ["imm: "; string_of_int imm; "\tsize: "; string_of_int size]
+			 	| XOR -> "xor"
+			 	| _ -> "ukn"
+			in
+			printf "[R64]  0x%Lx\t%s\t%s\n" addr str flag_str;
 		in
 		List.iter print_flagged_addr (List.rev state)
 end
