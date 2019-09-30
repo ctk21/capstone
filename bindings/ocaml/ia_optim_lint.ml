@@ -606,9 +606,9 @@ let passes =
 
 let prog =
   let info =
-    let doc = "test for Intel optimization rule violations" in
+    let doc = "test for Intel optimization manual compiler rule violations" in
     let man = [] in
-    Term.info "test_tom" ~version:"v0.1" ~doc ~man
+    Term.info "ia_optim_lint" ~version:"v0.1" ~doc ~man
   in
   (Term.(const run $ filename $ passes), info)
 
